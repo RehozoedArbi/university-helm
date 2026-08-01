@@ -1,0 +1,113 @@
+namespace: university-app
+
+# ATTENTION : "latest" est utilisé temporairement. À remplacer par des tags
+# versionnés explicites (v1, v2...) avant tout scénario de rollback —
+# indispensable pour le projet de moteur de vérification.
+image:
+  registry: docker.io/darbi
+  tag: latest
+  pullPolicy: Always  # cohérent avec le tag "latest" ; repasser à IfNotPresent avec des tags versionnés
+
+# --- Postgres ---
+postgres:
+  image: postgres:16-alpine
+  port: 5432
+  storage:
+    size: 1Gi
+    storageClassName: local-path
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+  # Valeurs par défaut de démo — à surcharger via --set ou un values
+  # secrets.yaml séparé non commité en usage réel.
+  auth:
+    postgresUser: postgres_admin
+    postgresPassword: "CHANGE_ME_ADMIN"
+    postgresDb: university_db
+    studentDbUser: student_user
+    studentDbPassword: "CHANGE_ME_STUDENT"
+    teacherAdminDbUser: teacher_admin_user
+    teacherAdminDbPassword: "CHANGE_ME_TEACHER"
+    enrollmentDbUser: enrollment_user
+    enrollmentDbPassword: "CHANGE_ME_ENROLLMENT"
+
+# --- student-service ---
+studentService:
+  name: student-service
+  image: university-student-service
+  port: 5001
+  replicas:
+    min: 2
+    max: 4
+  targetCpuUtilization: 75
+  resources:
+    requests:
+      cpu: 100m
+      memory: 150Mi
+    limits:
+      cpu: 300m
+      memory: 300Mi
+  env:
+    dbSchema: student_schema
+    httpTimeoutSeconds: "3.0"
+    logLevel: INFO
+
+# --- teacher-admin-service ---
+teacherAdminService:
+  name: teacher-admin-service
+  image: university-teacher-admin-service
+  port: 8080
+  replicas:
+    min: 2
+    max: 4
+  targetCpuUtilization: 75
+  resources:
+    requests:
+      cpu: 150m
+      memory: 300Mi
+    limits:
+      cpu: 400m
+      memory: 500Mi
+  env:
+    dbSchema: teacher_admin_schema
+
+# --- enrollment-service ---
+enrollmentService:
+  name: enrollment-service
+  image: university-enrollment-service
+  port: 5003
+  replicas:
+    min: 2
+    max: 4
+  targetCpuUtilization: 75
+  resources:
+    requests:
+      cpu: 100m
+      memory: 150Mi
+    limits:
+      cpu: 300m
+      memory: 300Mi
+  env:
+    dbSchema: enrollment_schema
+    httpTimeoutSeconds: "3.0"
+    logLevel: INFO
+
+# --- frontend ---
+frontend:
+  name: frontend
+  image: university-frontend
+  port: 80
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  ingress:
+    host: university.local

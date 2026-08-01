@@ -1,0 +1,55 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-scripts
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/part-of: university-app
+data:
+  01-init-schemas-roles.sh: |
+    #!/bin/bash
+    # Initialisation exécutée automatiquement par l'image officielle postgres
+    # (docker-entrypoint-initdb.d) au tout premier démarrage du volume de données.
+    #
+    # Objectif sécurité : chaque service a son propre rôle PostgreSQL, restreint
+    # à son propre schéma (principe du moindre privilège). Aucune requête
+    # cross-schéma n'est possible avec ces droits : toute communication
+    # inter-service doit passer par les API REST.
+    set -euo pipefail
+
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+        -- Schémas dédiés, un par service
+        CREATE SCHEMA IF NOT EXISTS student_schema;
+        CREATE SCHEMA IF NOT EXISTS teacher_admin_schema;
+        CREATE SCHEMA IF NOT EXISTS enrollment_schema;
+
+        -- Rôles applicatifs dédiés (jamais le superuser côté service)
+        DO \$\$
+        BEGIN
+            IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${STUDENT_DB_USER}') THEN
+                CREATE ROLE ${STUDENT_DB_USER} LOGIN PASSWORD '${STUDENT_DB_PASSWORD}';
+            END IF;
+            IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${TEACHER_ADMIN_DB_USER}') THEN
+                CREATE ROLE ${TEACHER_ADMIN_DB_USER} LOGIN PASSWORD '${TEACHER_ADMIN_DB_PASSWORD}';
+            END IF;
+            IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${ENROLLMENT_DB_USER}') THEN
+                CREATE ROLE ${ENROLLMENT_DB_USER} LOGIN PASSWORD '${ENROLLMENT_DB_PASSWORD}';
+            END IF;
+        END
+        \$\$;
+
+        -- Chaque rôle est propriétaire de son schéma : il peut créer/modifier
+        -- ses propres tables (migrations Alembic / Flyway) mais ne voit rien
+        -- des autres schémas.
+        ALTER SCHEMA student_schema OWNER TO ${STUDENT_DB_USER};
+        ALTER SCHEMA teacher_admin_schema OWNER TO ${TEACHER_ADMIN_DB_USER};
+        ALTER SCHEMA enrollment_schema OWNER TO ${ENROLLMENT_DB_USER};
+
+        GRANT CONNECT ON DATABASE ${POSTGRES_DB} TO ${STUDENT_DB_USER}, ${TEACHER_ADMIN_DB_USER}, ${ENROLLMENT_DB_USER};
+
+        ALTER ROLE ${STUDENT_DB_USER} IN DATABASE ${POSTGRES_DB} SET search_path TO student_schema;
+        ALTER ROLE ${TEACHER_ADMIN_DB_USER} IN DATABASE ${POSTGRES_DB} SET search_path TO teacher_admin_schema;
+        ALTER ROLE ${ENROLLMENT_DB_USER} IN DATABASE ${POSTGRES_DB} SET search_path TO enrollment_schema;
+    EOSQL
+
+    echo "[postgres-init] Schémas et rôles applicatifs créés avec succès."

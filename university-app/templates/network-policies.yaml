@@ -1,0 +1,189 @@
+# ============================================================
+# Politique "deny all" par défaut, puis autorisations explicites
+# minimales, alignées sur les dépendances réelles du système :
+#   frontend -> student, teacher-admin, enrollment
+#   student  -> postgres, teacher-admin, enrollment
+#   enrollment -> postgres, student, teacher-admin
+#   teacher-admin -> postgres
+# ============================================================
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+
+---
+# DNS reste nécessaire pour TOUS les pods (résolution des noms de service).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-policy
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.studentService.name }} } }
+        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.teacherAdminService.name }} } }
+        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.enrollmentService.name }} } }
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.port }}
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: student-service-policy
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.studentService.name }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.frontend.name }} } }
+        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.enrollmentService.name }} } }
+      ports:
+        - protocol: TCP
+          port: {{ .Values.studentService.port }}
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: postgres } }
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.port }}
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.teacherAdminService.name }} } }
+      ports:
+        - protocol: TCP
+          port: {{ .Values.teacherAdminService.port }}
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.enrollmentService.name }} } }
+      ports:
+        - protocol: TCP
+          port: {{ .Values.enrollmentService.port }}
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: teacher-admin-service-policy
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.teacherAdminService.name }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.frontend.name }} } }
+        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.studentService.name }} } }
+        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.enrollmentService.name }} } }
+      ports:
+        - protocol: TCP
+          port: {{ .Values.teacherAdminService.port }}
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: postgres } }
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.port }}
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: enrollment-service-policy
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.enrollmentService.name }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.frontend.name }} } }
+        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.studentService.name }} } }
+      ports:
+        - protocol: TCP
+          port: {{ .Values.enrollmentService.port }}
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: postgres } }
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.port }}
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.studentService.name }} } }
+      ports:
+        - protocol: TCP
+          port: {{ .Values.studentService.port }}
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.teacherAdminService.name }} } }
+      ports:
+        - protocol: TCP
+          port: {{ .Values.teacherAdminService.port }}
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-policy
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.frontend.name }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Traefik (Ingress Controller natif k3d) tourne dans kube-system.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: {{ .Values.frontend.port }}
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.studentService.name }} } }
+      ports:
+        - protocol: TCP
+          port: {{ .Values.studentService.port }}
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.teacherAdminService.name }} } }
+      ports:
+        - protocol: TCP
+          port: {{ .Values.teacherAdminService.port }}
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.enrollmentService.name }} } }
+      ports:
+        - protocol: TCP
+          port: {{ .Values.enrollmentService.port }}

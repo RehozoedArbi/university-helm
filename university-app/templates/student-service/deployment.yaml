@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.studentService.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.studentService.name }}
+    app.kubernetes.io/part-of: university-app
+    app.kubernetes.io/version: {{ .Values.image.tag | quote }}
+spec:
+  replicas: {{ .Values.studentService.replicas.min }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.studentService.name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Values.studentService.name }}
+        app.kubernetes.io/part-of: university-app
+        app.kubernetes.io/version: {{ .Values.image.tag | quote }}
+    spec:
+      containers:
+        - name: {{ .Values.studentService.name }}
+          image: "{{ .Values.image.registry }}/{{ .Values.studentService.image }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.studentService.port }}
+          env:
+            - name: DB_USER
+              valueFrom: { secretKeyRef: { name: postgres-credentials, key: STUDENT_DB_USER } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-credentials, key: STUDENT_DB_PASSWORD } }
+            - name: DB_NAME
+              valueFrom: { secretKeyRef: { name: postgres-credentials, key: POSTGRES_DB } }
+            - name: DB_HOST
+              value: "postgres"
+            - name: DB_PORT
+              value: {{ .Values.postgres.port | quote }}
+            - name: DB_SCHEMA
+              value: {{ .Values.studentService.env.dbSchema | quote }}
+            - name: TEACHER_ADMIN_SERVICE_URL
+              value: "http://{{ .Values.teacherAdminService.name }}:{{ .Values.teacherAdminService.port }}"
+            - name: ENROLLMENT_SERVICE_URL
+              value: "http://{{ .Values.enrollmentService.name }}:{{ .Values.enrollmentService.port }}"
+            - name: HTTP_TIMEOUT_SECONDS
+              value: {{ .Values.studentService.env.httpTimeoutSeconds | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.studentService.env.logLevel | quote }}
+          resources:
+            {{- toYaml .Values.studentService.resources | nindent 12 }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.studentService.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.studentService.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

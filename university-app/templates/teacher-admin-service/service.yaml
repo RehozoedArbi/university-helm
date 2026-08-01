@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.teacherAdminService.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.teacherAdminService.name }}
+    app.kubernetes.io/part-of: university-app
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ .Values.teacherAdminService.name }}
+  ports:
+    - port: {{ .Values.teacherAdminService.port }}
+      targetPort: {{ .Values.teacherAdminService.port }}
