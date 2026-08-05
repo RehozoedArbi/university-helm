@@ -1,12 +1,8 @@
 # ============================================================
-# Politique "deny all" par défaut, puis autorisations explicites
-# minimales, alignées sur les dépendances réelles du système :
-#   frontend -> student, teacher-admin, enrollment
-#   student  -> postgres, teacher-admin, enrollment
-#   enrollment -> postgres, student, teacher-admin
-#   teacher-admin -> postgres
+# NetworkPolicies — Namespace Application ({{ .Values.namespace }})
 # ============================================================
 
+# 1. Défaut : Isolation totale Ingress et Egress
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -14,10 +10,12 @@ metadata:
   namespace: {{ .Values.namespace }}
 spec:
   podSelector: {}
-  policyTypes: [Ingress, Egress]
+  policyTypes:
+    - Ingress
+    - Egress
 
 ---
-# DNS reste nécessaire pour TOUS les pods (résolution des noms de service).
+# 2. DNS Egress (Restreint exclusivement au namespace kube-system / CoreDNS)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -25,10 +23,13 @@ metadata:
   namespace: {{ .Values.namespace }}
 spec:
   podSelector: {}
-  policyTypes: [Egress]
+  policyTypes:
+    - Egress
   egress:
     - to:
-        - namespaceSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
       ports:
         - protocol: UDP
           port: 53
@@ -36,6 +37,7 @@ spec:
           port: 53
 
 ---
+# 3. Base de données PostgreSQL
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -45,146 +47,25 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: postgres
-  policyTypes: [Ingress]
+  policyTypes:
+    - Ingress
   ingress:
     - from:
-        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.studentService.name }} } }
-        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.teacherAdminService.name }} } }
-        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.enrollmentService.name }} } }
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.studentService.name }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.teacherAdminService.name }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.enrollmentService.name }}
       ports:
         - protocol: TCP
           port: {{ .Values.postgres.port }}
 
 ---
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: student-service-policy
-  namespace: {{ .Values.namespace }}
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: {{ .Values.studentService.name }}
-  policyTypes: [Ingress, Egress]
-  ingress:
-    - from:
-        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.frontend.name }} } }
-        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.enrollmentService.name }} } }
-      ports:
-        - protocol: TCP
-          port: {{ .Values.studentService.port }}
-    # Prometheus monitoring peut scraper /metrics
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: monitoring
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: prometheus
-      ports:
-        - protocol: TCP
-          port: {{ .Values.studentService.port }}
-  egress:
-    - to:
-        - podSelector: { matchLabels: { app.kubernetes.io/name: postgres } }
-      ports:
-        - protocol: TCP
-          port: {{ .Values.postgres.port }}
-    - to:
-        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.teacherAdminService.name }} } }
-      ports:
-        - protocol: TCP
-          port: {{ .Values.teacherAdminService.port }}
-    - to:
-        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.enrollmentService.name }} } }
-      ports:
-        - protocol: TCP
-          port: {{ .Values.enrollmentService.port }}
-
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: teacher-admin-service-policy
-  namespace: {{ .Values.namespace }}
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: {{ .Values.teacherAdminService.name }}
-  policyTypes: [Ingress, Egress]
-  ingress:
-    - from:
-        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.frontend.name }} } }
-        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.studentService.name }} } }
-        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.enrollmentService.name }} } }
-      ports:
-        - protocol: TCP
-          port: {{ .Values.teacherAdminService.port }}
-    # Prometheus monitoring peut scraper /metrics
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: monitoring
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: prometheus
-      ports:
-        - protocol: TCP
-          port: {{ .Values.teacherAdminService.port }}
-  egress:
-    - to:
-        - podSelector: { matchLabels: { app.kubernetes.io/name: postgres } }
-      ports:
-        - protocol: TCP
-          port: {{ .Values.postgres.port }}
-
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: enrollment-service-policy
-  namespace: {{ .Values.namespace }}
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: {{ .Values.enrollmentService.name }}
-  policyTypes: [Ingress, Egress]
-  ingress:
-    - from:
-        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.frontend.name }} } }
-        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.studentService.name }} } }
-      ports:
-        - protocol: TCP
-          port: {{ .Values.enrollmentService.port }}
-    # Prometheus monitoring peut scraper /metrics
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: monitoring
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: prometheus
-      ports:
-        - protocol: TCP
-          port: {{ .Values.enrollmentService.port }}
-  egress:
-    - to:
-        - podSelector: { matchLabels: { app.kubernetes.io/name: postgres } }
-      ports:
-        - protocol: TCP
-          port: {{ .Values.postgres.port }}
-    - to:
-        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.studentService.name }} } }
-      ports:
-        - protocol: TCP
-          port: {{ .Values.studentService.port }}
-    - to:
-        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.teacherAdminService.name }} } }
-      ports:
-        - protocol: TCP
-          port: {{ .Values.teacherAdminService.port }}
-
----
+# 4. Frontend (Reçoit le trafic Traefik, communique vers les microservices backend)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -194,9 +75,10 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: {{ .Values.frontend.name }}
-  policyTypes: [Ingress, Egress]
+  policyTypes:
+    - Ingress
+    - Egress
   ingress:
-    # Traefik (Ingress Controller natif k3d) tourne dans kube-system.
     - from:
         - namespaceSelector:
             matchLabels:
@@ -206,17 +88,192 @@ spec:
           port: {{ .Values.frontend.port }}
   egress:
     - to:
-        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.studentService.name }} } }
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.studentService.name }}
       ports:
         - protocol: TCP
           port: {{ .Values.studentService.port }}
     - to:
-        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.teacherAdminService.name }} } }
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.teacherAdminService.name }}
       ports:
         - protocol: TCP
           port: {{ .Values.teacherAdminService.port }}
     - to:
-        - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.enrollmentService.name }} } }
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.enrollmentService.name }}
       ports:
         - protocol: TCP
           port: {{ .Values.enrollmentService.port }}
+
+---
+# 5. Student Service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: student-service-policy
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.studentService.name }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Trafic applicatif interne
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.frontend.name }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.enrollmentService.name }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.studentService.port }}
+    # Scrape Prometheus inter-namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoringNamespace | default "monitoring" }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: {{ .Values.studentService.port }}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.port }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.teacherAdminService.name }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.teacherAdminService.port }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.enrollmentService.name }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.enrollmentService.port }}
+
+---
+# 6. Teacher Admin Service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: teacher-admin-service-policy
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.teacherAdminService.name }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Trafic applicatif interne
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.frontend.name }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.studentService.name }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.enrollmentService.name }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.teacherAdminService.port }}
+    # Scrape Prometheus inter-namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoringNamespace | default "monitoring" }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: {{ .Values.teacherAdminService.port }}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.port }}
+
+---
+# 7. Enrollment Service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: enrollment-service-policy
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.enrollmentService.name }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Trafic applicatif interne
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.frontend.name }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.studentService.name }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.enrollmentService.port }}
+    # Scrape Prometheus inter-namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoringNamespace | default "monitoring" }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: {{ .Values.enrollmentService.port }}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.port }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.studentService.name }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.studentService.port }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.teacherAdminService.name }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.teacherAdminService.port }}

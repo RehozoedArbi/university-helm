@@ -74,6 +74,7 @@ teacherAdminService:
       memory: 500Mi
   env:
     dbSchema: teacher_admin_schema
+    percentilesHistogram: "true"
 
 # --- enrollment-service ---
 enrollmentService:

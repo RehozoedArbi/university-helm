@@ -38,6 +38,8 @@ spec:
               value: {{ .Values.postgres.port | quote }}
             - name: DB_SCHEMA
               value: {{ .Values.teacherAdminService.env.dbSchema | quote }}
+            - name: MANAGEMENT_METRICS_DISTRIBUTION_PERCENTILESHISTOGRAM_HTTP_SERVER_REQUESTS
+              value: {{ .Values.teacherAdminService.env.percentilesHistogram | quote }}
           resources:
             {{- toYaml .Values.teacherAdminService.resources | nindent 12 }}
           securityContext:
