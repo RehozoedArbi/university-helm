@@ -168,6 +168,19 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.enrollmentService.port }}
+    # Envoi des traces OTLP vers le Collector (cross-namespace)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoringNamespace | default "monitoring" }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
 
 ---
 # 6. Teacher Admin Service
@@ -217,6 +230,19 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.postgres.port }}
+    # Envoi des traces OTLP vers le Collector (cross-namespace)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoringNamespace | default "monitoring" }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
 
 ---
 # 7. Enrollment Service
@@ -277,3 +303,16 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.teacherAdminService.port }}
+    # Envoi des traces OTLP vers le Collector (cross-namespace)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoringNamespace | default "monitoring" }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318

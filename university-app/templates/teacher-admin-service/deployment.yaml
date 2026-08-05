@@ -14,6 +14,8 @@ spec:
       app.kubernetes.io/name: {{ .Values.teacherAdminService.name }}
   template:
     metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "true"
       labels:
         app.kubernetes.io/name: {{ .Values.teacherAdminService.name }}
         app.kubernetes.io/part-of: university-app
@@ -40,6 +42,10 @@ spec:
               value: {{ .Values.teacherAdminService.env.dbSchema | quote }}
             - name: MANAGEMENT_METRICS_DISTRIBUTION_PERCENTILESHISTOGRAM_HTTP_SERVER_REQUESTS
               value: {{ .Values.teacherAdminService.env.percentilesHistogram | quote }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.monitoring.svc.cluster.local:4317"
+            - name: OTEL_SERVICE_NAME
+              value: "{{ .Values.teacherAdminService.name }}"
           resources:
             {{- toYaml .Values.teacherAdminService.resources | nindent 12 }}
           securityContext:
@@ -53,17 +59,17 @@ spec:
             httpGet:
               path: /actuator/health
               port: {{ .Values.teacherAdminService.port }}
-            initialDelaySeconds: 20
-            periodSeconds: 5
-            timeoutSeconds: 3
+            initialDelaySeconds: 55
+            periodSeconds: 10
+            timeoutSeconds: 5
             failureThreshold: 10
           livenessProbe:
             httpGet:
               path: /actuator/health
               port: {{ .Values.teacherAdminService.port }}
-            initialDelaySeconds: 30
+            initialDelaySeconds: 60
             periodSeconds: 10
-            timeoutSeconds: 3
+            timeoutSeconds: 5
             failureThreshold: 3
           volumeMounts:
             - name: tmp
