@@ -73,6 +73,17 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.studentService.port }}
+    # Prometheus monitoring peut scraper /metrics
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: {{ .Values.studentService.port }}
   egress:
     - to:
         - podSelector: { matchLabels: { app.kubernetes.io/name: postgres } }
@@ -109,6 +120,17 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.teacherAdminService.port }}
+    # Prometheus monitoring peut scraper /metrics
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: {{ .Values.teacherAdminService.port }}
   egress:
     - to:
         - podSelector: { matchLabels: { app.kubernetes.io/name: postgres } }
@@ -131,6 +153,17 @@ spec:
     - from:
         - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.frontend.name }} } }
         - podSelector: { matchLabels: { app.kubernetes.io/name: {{ .Values.studentService.name }} } }
+      ports:
+        - protocol: TCP
+          port: {{ .Values.enrollmentService.port }}
+    # Prometheus monitoring peut scraper /metrics
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
       ports:
         - protocol: TCP
           port: {{ .Values.enrollmentService.port }}
