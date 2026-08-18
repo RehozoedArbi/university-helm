@@ -1,0 +1,96 @@
+# --- Ingress frontend (statique, pas de strip) ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/part-of: university-app
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.frontend.name }}
+                port:
+                  number: {{ .Values.frontend.port }}
+
+---
+# --- Ingress student-service (/api/students → strip → /students) ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: student-service-ingress
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/part-of: university-app
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: >-
+      {{ .Values.namespace }}-strip-api-students@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /api/students
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.studentService.name }}
+                port:
+                  number: {{ .Values.studentService.port }}
+
+---
+# --- Ingress teacher-admin-service (/api/teachers → strip → /) ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: teacher-admin-service-ingress
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/part-of: university-app
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: >-
+      {{ .Values.namespace }}-strip-api-teachers@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /api/teachers
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.teacherAdminService.name }}
+                port:
+                  number: {{ .Values.teacherAdminService.port }}
+
+---
+# --- Ingress enrollment-service (/api/enrollments → strip → /) ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: enrollment-service-ingress
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/part-of: university-app
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: >-
+      {{ .Values.namespace }}-strip-api-enrollments@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /api/enrollments
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.enrollmentService.name }}
+                port:
+                  number: {{ .Values.enrollmentService.port }}
+

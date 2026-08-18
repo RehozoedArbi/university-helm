@@ -65,7 +65,9 @@ spec:
           port: {{ .Values.postgres.port }}
 
 ---
-# 4. Frontend (Reçoit le trafic Traefik, communique vers les microservices backend)
+# 4. Frontend — reçoit uniquement le trafic Traefik (kube-system).
+# Pas d'Egress : le frontend ne parle plus directement aux backends,
+# c'est Traefik qui route /api/* directement vers les services concernés.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -77,7 +79,6 @@ spec:
       app.kubernetes.io/name: {{ .Values.frontend.name }}
   policyTypes:
     - Ingress
-    - Egress
   ingress:
     - from:
         - namespaceSelector:
@@ -86,28 +87,6 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.frontend.port }}
-  egress:
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: {{ .Values.studentService.name }}
-      ports:
-        - protocol: TCP
-          port: {{ .Values.studentService.port }}
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: {{ .Values.teacherAdminService.name }}
-      ports:
-        - protocol: TCP
-          port: {{ .Values.teacherAdminService.port }}
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: {{ .Values.enrollmentService.name }}
-      ports:
-        - protocol: TCP
-          port: {{ .Values.enrollmentService.port }}
 
 ---
 # 5. Student Service
@@ -124,14 +103,23 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Trafic applicatif interne
+    # Trafic applicatif interne (enrollment-service uniquement — le frontend
+    # ne parle plus directement aux backends depuis la migration Traefik)
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: {{ .Values.frontend.name }}
-        - podSelector:
-            matchLabels:
               app.kubernetes.io/name: {{ .Values.enrollmentService.name }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.studentService.port }}
+    # Traefik → student-service direct (routing /api/students via Ingress)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
       ports:
         - protocol: TCP
           port: {{ .Values.studentService.port }}
@@ -197,17 +185,25 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Trafic applicatif interne
+    # Trafic applicatif interne (student + enrollment — plus le frontend)
     - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: {{ .Values.frontend.name }}
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: {{ .Values.studentService.name }}
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: {{ .Values.enrollmentService.name }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.teacherAdminService.port }}
+    # Traefik → teacher-admin-service direct (routing /api/teachers via Ingress)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
       ports:
         - protocol: TCP
           port: {{ .Values.teacherAdminService.port }}
@@ -259,14 +255,22 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Trafic applicatif interne
+    # Trafic applicatif interne (student-service uniquement — plus le frontend)
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: {{ .Values.frontend.name }}
-        - podSelector:
-            matchLabels:
               app.kubernetes.io/name: {{ .Values.studentService.name }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.enrollmentService.port }}
+    # Traefik → enrollment-service direct (routing /api/enrollments via Ingress)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
       ports:
         - protocol: TCP
           port: {{ .Values.enrollmentService.port }}
