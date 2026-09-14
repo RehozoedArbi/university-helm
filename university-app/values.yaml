@@ -5,7 +5,7 @@ namespace: university-app
 # indispensable pour le projet de moteur de vérification.
 image:
   registry: docker.io/darbi
-  tag: 0.1
+  tag: latest
   pullPolicy: Always  # cohérent avec le tag "latest" ; repasser à IfNotPresent avec des tags versionnés
 
 # --- Postgres ---
