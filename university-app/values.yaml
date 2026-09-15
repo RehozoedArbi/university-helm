@@ -97,7 +97,7 @@ enrollmentService:
 frontend:
   name: frontend
   image: university-frontend
-  tag: 0.1
+  tag: 13f20b9
   port: 80
   replicas: 1
   resources:
