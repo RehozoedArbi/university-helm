@@ -5,7 +5,6 @@ namespace: university-app
 # indispensable pour le projet de moteur de vérification.
 image:
   registry: docker.io/darbi
-  tag: 0.1
   pullPolicy: Always  # cohérent avec le tag "latest" ; repasser à IfNotPresent avec des tags versionnés
 
 # --- Postgres ---
@@ -39,6 +38,7 @@ postgres:
 studentService:
   name: student-service
   image: university-student-service
+  tag: 0.1
   port: 5001
   replicas:
     min: 2
@@ -60,6 +60,7 @@ studentService:
 teacherAdminService:
   name: teacher-admin-service
   image: university-teacher-admin-service
+  tag: 0.1
   port: 8080
   replicas:
     min: 2
@@ -80,6 +81,7 @@ teacherAdminService:
 enrollmentService:
   name: enrollment-service
   image: university-enrollment-service
+  tag: 0.1
   port: 5003
   replicas:
     min: 2
@@ -101,6 +103,7 @@ enrollmentService:
 frontend:
   name: frontend
   image: university-frontend
+  tag: 0.1
   port: 80
   replicas: 1
   resources:
