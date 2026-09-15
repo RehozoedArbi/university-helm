@@ -56,7 +56,7 @@ studentService:
 teacherAdminService:
   name: teacher-admin-service
   image: university-teacher-admin-service
-  tag: 0.1
+  tag: e0cbbb3
   port: 8080
   replicas:
     min: 2
