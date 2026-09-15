@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: {{ .Values.frontend.name }}
-          image: "{{ .Values.image.registry }}/{{ .Values.frontend.image }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.registry }}/{{ .Values.frontend.image }}:{{ .Values.frontend.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: {{ .Values.frontend.port }}
