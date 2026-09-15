@@ -23,7 +23,7 @@ spec:
     spec:
       containers:
         - name: {{ .Values.enrollmentService.name }}
-          image: "{{ .Values.image.registry }}/{{ .Values.enrollmentService.image }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.registry }}/{{ .Values.enrollmentService.image }}:{{ .Values.enrollmentService.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: {{ .Values.enrollmentService.port }}
