@@ -1,12 +1,10 @@
 namespace: university-app
-
 # ATTENTION : "latest" est utilisé temporairement. À remplacer par des tags
 # versionnés explicites (v1, v2...) avant tout scénario de rollback —
 # indispensable pour le projet de moteur de vérification.
 image:
   registry: docker.io/darbi
-  pullPolicy: Always  # cohérent avec le tag "latest" ; repasser à IfNotPresent avec des tags versionnés
-
+  pullPolicy: Always # cohérent avec le tag "latest" ; repasser à IfNotPresent avec des tags versionnés
 # --- Postgres ---
 postgres:
   image: postgres:16-alpine
@@ -33,12 +31,11 @@ postgres:
     teacherAdminDbPassword: "CHANGE_ME_TEACHER"
     enrollmentDbUser: enrollment_user
     enrollmentDbPassword: "CHANGE_ME_ENROLLMENT"
-
 # --- student-service ---
 studentService:
   name: student-service
   image: university-student-service
-  tag: 0.1
+  tag: 78eeb02
   port: 5001
   replicas:
     min: 2
@@ -55,7 +52,6 @@ studentService:
     dbSchema: student_schema
     httpTimeoutSeconds: "3.0"
     logLevel: INFO
-
 # --- teacher-admin-service ---
 teacherAdminService:
   name: teacher-admin-service
@@ -76,7 +72,6 @@ teacherAdminService:
   env:
     dbSchema: teacher_admin_schema
     percentilesHistogram: "true"
-
 # --- enrollment-service ---
 enrollmentService:
   name: enrollment-service
@@ -98,7 +93,6 @@ enrollmentService:
     dbSchema: enrollment_schema
     httpTimeoutSeconds: "3.0"
     logLevel: INFO
-
 # --- frontend ---
 frontend:
   name: frontend
