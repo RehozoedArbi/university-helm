@@ -23,7 +23,7 @@ spec:
     spec:
       containers:
         - name: {{ .Values.teacherAdminService.name }}
-          image: "{{ .Values.image.registry }}/{{ .Values.teacherAdminService.image }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.registry }}/{{ .Values.teacherAdminService.image }}:{{ .Values.teacherAdminService.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: {{ .Values.teacherAdminService.port }}
