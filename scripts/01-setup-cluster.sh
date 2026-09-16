@@ -3,14 +3,20 @@ set -euo pipefail
 
 # ============================================================
 # Setup complet : cluster k3d (1 noeud) + Calico + metrics-server
-# + university-app + university-monitoring (OTel, Tempo, Grafana)
-# + OpenTelemetry Operator
+# + OpenTelemetry Operator + university-app + university-monitoring
+# + ArgoCD
+#
+# Ordre intentionnel : OTel Operator + Instrumentation sont déployés
+# AVANT university-app, ce qui permet l'injection automatique des
+# agents au premier scheduling des pods (pas de rollout restart).
 # ============================================================
 
 CLUSTER_NAME="university-cluster"
 NAMESPACE="university-app"
 MONITORING_NAMESPACE="monitoring"
 OTEL_NAMESPACE="opentelemetry-operator-system"
+ARGOCD_NAMESPACE="argocd"
+ARGOCD_PORT="8085"
 CHART_PATH="$(cd "$(dirname "$0")/.." && pwd)/university-app"
 MONITORING_REPO="https://github.com/RehozoedArbi/univ-monitoring-opentelemetry.git"
 MONITORING_CLONE_DIR="/tmp/university-monitoring-deploy"
@@ -22,6 +28,63 @@ ok()  { echo -e "\033[1;32m  ✓ $1\033[0m"; }
 err() { echo -e "\033[1;31m  ✗ $1\033[0m"; }
 
 # ------------------------------------------------------------
+# Attend qu'une commande réussisse (poll actif), sans jamais
+# se contenter d'un délai fixe. Sort le script en erreur si le
+# timeout est dépassé (pas de "faux succès" silencieux).
+# Usage: wait_until "description" timeout_s interval_s cmd [args...]
+# ------------------------------------------------------------
+wait_until() {
+  local desc="$1"; local timeout="$2"; local interval="$3"; shift 3
+  local waited=0
+  until "$@" &>/dev/null; do
+    if [ "$waited" -ge "$timeout" ]; then
+      err "Timeout (${timeout}s) en attendant: ${desc}"
+      return 1
+    fi
+    sleep "$interval"
+    waited=$((waited + interval))
+  done
+  ok "$desc"
+}
+
+# ------------------------------------------------------------
+# Attend que des pods correspondant au selector existent PUIS
+# qu'ils soient tous Ready. Corrige le bug où kubectl wait
+# échouait instantanément faute de ressources encore créées.
+# ------------------------------------------------------------
+wait_pods_ready_selector() {
+  local ns="$1" selector="$2" timeout="${3:-360}"
+  wait_until "pods (${selector}) présents dans ${ns}" 90 3 \
+    bash -c "kubectl get pods -n '${ns}' -l '${selector}' --no-headers 2>/dev/null | grep -q ." \
+    || exit 1
+
+  log "Attente Ready: pods (${selector}) dans ${ns}"
+  if ! kubectl wait --for=condition=Ready pods -l "${selector}" -n "${ns}" --timeout="${timeout}s"; then
+    err "Des pods (${selector}) ne sont pas Ready dans ${ns} :"
+    kubectl get pods -n "${ns}" -l "${selector}" -o wide
+    kubectl get events -n "${ns}" --sort-by='.lastTimestamp' | tail -20
+    exit 1
+  fi
+  ok "Pods (${selector}) Ready dans ${ns}"
+}
+
+wait_pods_ready_all() {
+  local ns="$1" timeout="${2:-360}"
+  wait_until "au moins un pod présent dans ${ns}" 90 3 \
+    bash -c "kubectl get pods -n '${ns}' --no-headers 2>/dev/null | grep -q ." \
+    || exit 1
+
+  log "Attente Ready: tous les pods dans ${ns}"
+  if ! kubectl wait --for=condition=Ready pods --all -n "${ns}" --timeout="${timeout}s"; then
+    err "Certains pods ne sont pas Ready dans ${ns} :"
+    kubectl get pods -n "${ns}" -o wide
+    kubectl get events -n "${ns}" --sort-by='.lastTimestamp' | tail -20
+    exit 1
+  fi
+  ok "Tous les pods sont Ready dans ${ns}"
+}
+
+# ============================================================
 log "1. Vérification des prérequis (docker, k3d, kubectl, helm)"
 
 if ! command -v docker &>/dev/null; then
@@ -88,13 +151,7 @@ kubectl config use-context "k3d-${CLUSTER_NAME}" >/dev/null
 
 # ------------------------------------------------------------
 log "3. Attente que les noeuds soient enregistrés"
-for i in $(seq 1 30); do
-  if kubectl get nodes &>/dev/null; then
-    ok "API server accessible"
-    break
-  fi
-  sleep 2
-done
+wait_until "API server accessible" 60 2 kubectl get nodes || exit 1
 
 # ------------------------------------------------------------
 log "4. Installation de Calico (CNI, nécessaire pour les NetworkPolicy)"
@@ -103,15 +160,12 @@ if kubectl get ns calico-system &>/dev/null; then
 else
   kubectl apply -f "https://raw.githubusercontent.com/projectcalico/calico/${CALICO_VERSION}/manifests/calico.yaml"
   log "Ajustement du CIDR Calico pour correspondre à k3s (${K3S_POD_CIDR})"
+  wait_pods_ready_selector "kube-system" "k8s-app=calico-node" 60 || true
   kubectl set env daemonset/calico-node -n kube-system \
-    CALICO_IPV4POOL_CIDR="${K3S_POD_CIDR}" 2>/dev/null || true
+    CALICO_IPV4POOL_CIDR="${K3S_POD_CIDR}"
 fi
 
-log "Attente que Calico soit opérationnel (peut prendre 1-2 min)"
-kubectl wait --for=condition=Ready pods -l k8s-app=calico-node -n kube-system --timeout=180s || {
-  err "Calico met du temps à démarrer, vérifie 'kubectl get pods -n kube-system'"
-}
-ok "Calico opérationnel"
+wait_pods_ready_selector "kube-system" "k8s-app=calico-node" 360
 
 # ------------------------------------------------------------
 log "5. Attente que le noeud soit Ready (réseau opérationnel)"
@@ -129,37 +183,17 @@ else
   ok "metrics-server installé (mode --kubelet-insecure-tls, adapté au cluster local uniquement)"
 fi
 
-log "Attente que metrics-server soit prêt"
 kubectl wait --for=condition=Available deployment/metrics-server -n kube-system --timeout=120s
-ok "metrics-server prêt"
+wait_until "metrics-server sert des métriques" 90 5 kubectl top nodes || exit 1
 
 # ------------------------------------------------------------
-log "7. Déploiement du chart Helm university-app"
-helm upgrade --install university-app "${CHART_PATH}" \
-  --namespace "${NAMESPACE}" \
-  --create-namespace \
-  --wait --timeout=180s
-ok "Chart university-app déployé"
-
-# ------------------------------------------------------------
-log "8. Attente que tous les pods applicatifs soient Ready"
-kubectl wait --for=condition=Ready pods --all -n "${NAMESPACE}" --timeout=180s || {
-  err "Certains pods ne sont pas encore Ready. Diagnostic ci-dessous :"
-  kubectl get pods -n "${NAMESPACE}"
-  kubectl get events -n "${NAMESPACE}" --sort-by='.lastTimestamp' | tail -20
-  exit 1
-}
-ok "Tous les pods university-app sont Ready"
-
-# ------------------------------------------------------------
-log "9. Ajout des dépôts Helm pour le monitoring"
-
+log "7. Ajout des dépôts Helm pour le monitoring"
 helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts 2>/dev/null || true
 helm repo update open-telemetry
 ok "Dépôt open-telemetry ajouté"
 
 # ------------------------------------------------------------
-log "10. Installation de l'OpenTelemetry Operator"
+log "8. Installation de l'OpenTelemetry Operator"
 if helm status opentelemetry-operator -n "${OTEL_NAMESPACE}" &>/dev/null; then
   ok "OTel Operator déjà installé"
 else
@@ -174,24 +208,29 @@ else
   ok "OTel Operator installé"
 fi
 
-log "Attente que l'OTel Operator soit Ready"
-OTEL_DEPLOY=$(kubectl get deployment -n "${OTEL_NAMESPACE}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-if [ -z "${OTEL_DEPLOY}" ]; then
-  err "Aucun deployment trouvé dans ${OTEL_NAMESPACE}"; exit 1
-fi
-kubectl wait --for=condition=Available "deployment/${OTEL_DEPLOY}" \
-  -n "${OTEL_NAMESPACE}" --timeout=120s
-ok "OTel Operator prêt (${OTEL_DEPLOY})"
+log "Attente que l'OTel Operator (pods + webhook) soit vraiment prêt"
+wait_pods_ready_selector "${OTEL_NAMESPACE}" "app.kubernetes.io/name=opentelemetry-operator" 360
 
 # ------------------------------------------------------------
-log "11. Clone du chart university-monitoring depuis GitHub"
+log "9. Création du namespace university-app"
+# Doit exister avant le déploiement de university-monitoring,
+# qui cible ce namespace pour la configuration OTel.
+# On pose les labels/annotations attendus par Helm pour éviter
+# l'erreur "invalid ownership metadata" au helm install.
+kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+kubectl label namespace "${NAMESPACE}" \
+  app.kubernetes.io/managed-by=Helm --overwrite
+kubectl annotate namespace "${NAMESPACE}" \
+  meta.helm.sh/release-name=university-app \
+  meta.helm.sh/release-namespace="${NAMESPACE}" --overwrite
+ok "Namespace ${NAMESPACE} prêt (labels Helm posés)"
 
-# Nettoyage préventif si un clone partiel existe
+# ------------------------------------------------------------
+log "10. Clone du chart university-monitoring depuis GitHub"
 rm -rf "${MONITORING_CLONE_DIR}"
 git clone "${MONITORING_REPO}" "${MONITORING_CLONE_DIR}"
 ok "Repo cloné dans ${MONITORING_CLONE_DIR}"
 
-# Détecter le dossier du chart dans le repo (flexible selon la structure)
 MONITORING_CHART_PATH="${MONITORING_CLONE_DIR}"
 if [ -f "${MONITORING_CLONE_DIR}/university-monitoring/Chart.yaml" ]; then
   MONITORING_CHART_PATH="${MONITORING_CLONE_DIR}/university-monitoring"
@@ -199,56 +238,60 @@ elif [ -f "${MONITORING_CLONE_DIR}/Chart.yaml" ]; then
   MONITORING_CHART_PATH="${MONITORING_CLONE_DIR}"
 else
   err "Impossible de localiser Chart.yaml dans le repo cloné."
-  err "Structure trouvée :"
   find "${MONITORING_CLONE_DIR}" -name "Chart.yaml" | head -10
   exit 1
 fi
 ok "Chart trouvé : ${MONITORING_CHART_PATH}"
 
 # ------------------------------------------------------------
-log "12. Déploiement du chart university-monitoring"
+log "11. Déploiement du chart university-monitoring"
 helm upgrade --install university-monitoring "${MONITORING_CHART_PATH}" \
   --namespace "${MONITORING_NAMESPACE}" \
   --create-namespace \
-  --wait --timeout=180s
+  --wait --timeout=360s
 ok "Chart university-monitoring déployé"
 
-log "Attente que tous les pods monitoring soient Ready"
-kubectl wait --for=condition=Ready pods --all -n "${MONITORING_NAMESPACE}" --timeout=180s || {
-  err "Certains pods monitoring ne sont pas Ready. Diagnostic :"
-  kubectl get pods -n "${MONITORING_NAMESPACE}"
-  kubectl get events -n "${MONITORING_NAMESPACE}" --sort-by='.lastTimestamp' | tail -20
-  exit 1
-}
-ok "Tous les pods monitoring sont Ready"
+wait_pods_ready_all "${MONITORING_NAMESPACE}" 360
 
 # ------------------------------------------------------------
-log "13. Déploiement de la ressource Instrumentation OTel"
+log "12. Déploiement de la ressource Instrumentation OTel"
 
-# Attendre que le webhook OTel soit prêt avant d'appliquer la CR
-sleep 5
+INSTR_YAML=$(helm template university-monitoring "${MONITORING_CHART_PATH}" \
+  --show-only templates/otel-instrumentation/instrumentation.yaml)
 
-# instrumentation.yaml contient des templates Helm {{ }} — on le rend via
-# helm template avant de l'appliquer avec kubectl, en passant les valeurs
-# du chart pour résoudre targetNamespace et namespace.
-helm template university-monitoring "${MONITORING_CHART_PATH}"   --show-only templates/otel-instrumentation/instrumentation.yaml   | kubectl apply -f -
-
-log "Vérification de la ressource Instrumentation"
-kubectl wait --for=condition=Available \
-  instrumentation/university-instrumentation \
-  -n "${NAMESPACE}" --timeout=60s 2>/dev/null || {
-  # L'Instrumentation n'a pas de condition Available standard — on vérifie juste qu'elle existe
-  kubectl get instrumentation -n "${NAMESPACE}" | grep university-instrumentation \
-    && ok "Instrumentation créée" \
-    || { err "Instrumentation non trouvée"; exit 1; }
+# Le webhook d'admission peut accepter des pods "Ready" un peu avant
+# d'accepter réellement des requêtes : on retry l'apply au lieu d'un sleep fixe.
+apply_instrumentation() {
+  echo "${INSTR_YAML}" | kubectl apply -f -
 }
-ok "Ressource Instrumentation déployée"
+waited=0
+until apply_instrumentation; do
+  waited=$((waited + 3))
+  if [ "$waited" -ge 60 ]; then
+    err "Impossible d'appliquer la ressource Instrumentation après 60s (webhook OTel indisponible ?)"
+    exit 1
+  fi
+  sleep 3
+done
+ok "Ressource Instrumentation appliquée"
+
+kubectl get instrumentation -n "${NAMESPACE}" | grep university-instrumentation \
+  && ok "Instrumentation créée dans ${NAMESPACE}" \
+  || { err "Instrumentation non trouvée dans ${NAMESPACE}"; exit 1; }
 
 # ------------------------------------------------------------
-log "14. Redémarrage des pods applicatifs pour injection OTel"
-kubectl rollout restart deployment -n "${NAMESPACE}"
-kubectl rollout status deployment -n "${NAMESPACE}" --timeout=120s
-ok "Pods redémarrés avec injection OTel active"
+log "13. Déploiement du chart Helm university-app"
+# L'Operator et la ressource Instrumentation sont déjà en place :
+# les pods reçoivent l'injection OTel dès leur premier scheduling,
+# aucun rollout restart ne sera nécessaire.
+helm upgrade --install university-app "${CHART_PATH}" \
+  --namespace "${NAMESPACE}" \
+  --wait --timeout=360s
+ok "Chart university-app déployé"
+
+# ------------------------------------------------------------
+log "14. Vérification que tous les pods applicatifs sont Ready"
+wait_pods_ready_all "${NAMESPACE}" 360
 
 # ------------------------------------------------------------
 log "15. Nettoyage du repo cloné"
@@ -256,7 +299,39 @@ rm -rf "${MONITORING_CLONE_DIR}"
 ok "Dossier temporaire supprimé"
 
 # ------------------------------------------------------------
-log "16. Résumé du déploiement"
+log "16. Installation d'ArgoCD"
+if kubectl get ns "${ARGOCD_NAMESPACE}" &>/dev/null; then
+  ok "Namespace ${ARGOCD_NAMESPACE} déjà présent"
+else
+  kubectl create namespace "${ARGOCD_NAMESPACE}"
+fi
+
+kubectl apply --server-side -n "${ARGOCD_NAMESPACE}" -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+wait_pods_ready_all "${ARGOCD_NAMESPACE}" 360
+ok "ArgoCD déployé et Ready"
+
+log "17. Exposition d'ArgoCD sur le port ${ARGOCD_PORT}"
+pkill -f "port-forward svc/argocd-server" 2>/dev/null || true
+sleep 1
+nohup kubectl port-forward svc/argocd-server -n "${ARGOCD_NAMESPACE}" \
+  "${ARGOCD_PORT}:80" --address 0.0.0.0 \
+  > /tmp/argocd-port-forward.log 2>&1 &
+disown
+
+wait_until "port-forward ArgoCD actif sur le port ${ARGOCD_PORT}" 30 2 \
+  bash -c "curl -sk https://localhost:${ARGOCD_PORT} -o /dev/null" || {
+    err "Le port-forward ArgoCD n'a pas démarré, voir /tmp/argocd-port-forward.log"
+    cat /tmp/argocd-port-forward.log
+    exit 1
+  }
+ok "ArgoCD accessible sur https://localhost:${ARGOCD_PORT}"
+
+ARGOCD_PASS=$(kubectl -n "${ARGOCD_NAMESPACE}" get secret argocd-initial-admin-secret \
+  -o jsonpath="{.data.password}" 2>/dev/null | base64 -d || echo "(secret déjà supprimé, mot de passe changé)")
+
+# ------------------------------------------------------------
+log "18. Résumé du déploiement"
 echo ""
 echo "=== university-app ==="
 kubectl get pods -n "${NAMESPACE}" -o wide
@@ -277,6 +352,10 @@ echo ""
 echo "=== OTel Instrumentation ==="
 kubectl get instrumentation -n "${NAMESPACE}"
 
+echo ""
+echo "=== ArgoCD ==="
+kubectl get pods -n "${ARGOCD_NAMESPACE}"
+
 FRONTEND_HOST=$(kubectl get ingress -n "${NAMESPACE}" \
   -o jsonpath='{.items[0].spec.rules[0].host}' 2>/dev/null || echo "university.local")
 GRAFANA_HOST=$(kubectl get ingress -n "${MONITORING_NAMESPACE}" \
@@ -285,10 +364,10 @@ GRAFANA_HOST=$(kubectl get ingress -n "${MONITORING_NAMESPACE}" \
 echo ""
 ok "Déploiement complet terminé avec succès"
 echo ""
-echo "  Ajoute ces lignes à /etc/hosts :"
-echo "    127.0.0.1 ${FRONTEND_HOST}"
-echo "    127.0.0.1 ${GRAFANA_HOST}"
+
 echo ""
-echo "  Frontend  : http://${FRONTEND_HOST}:8080"
-echo "  Grafana   : http://${GRAFANA_HOST}:8080  (admin / admin123)"
+echo "  Frontend  : http://localhost/8080"
+echo "  Grafana   :  http://localhost/8080/grafana"
+echo "  ArgoCD    : https://localhost:${ARGOCD_PORT}  (admin / ${ARGOCD_PASS})"
+echo "              (port-forward en arrière-plan, log: /tmp/argocd-port-forward.log)"
 echo ""

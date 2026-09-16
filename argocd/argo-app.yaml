@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: university-app-helm
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/RehozoedArbi/university-helm.git' # Remplacez par votre URL Git
+    targetRevision: main                                       # Votre branche Git
+    path: university-app                            # Chemin vers Chart.yaml dans votre dépôt
+    helm:
+      valueFiles:
+        - values.yaml                                          # Fichier de valeurs à utiliser
+  destination:
+    server: 'https://kubernetes.default.svc'                   # Cluster K3s local
+    namespace: university-app                                         # Namespace cible pour l'application
+  syncPolicy:
+    automated:
+      prune: true                                              # CD : Supprime ce qui n'est plus dans Git
+      selfHeal: true                                           # CD : Corrige les dérives manuelles
+    syncOptions:
+      - CreateNamespace=true                                   # Crée le namespace cible s'il n'existe pas

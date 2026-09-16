@@ -8,7 +8,6 @@ metadata:
     app.kubernetes.io/part-of: university-app
     app.kubernetes.io/version: {{ .Values.image.tag | quote }}
 spec:
-  replicas: {{ .Values.frontend.replicas }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ .Values.frontend.name }}
